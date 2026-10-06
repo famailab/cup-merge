@@ -58,7 +58,7 @@
     <div class="title">CUP MERGE</div>
     <div class="subtitle">推 杯 合 并</div>
     <div class="howto">
-      👆 在底部点一下，杯子直飞到顶<br>
+      👆 按住杯子左右移动，松手发射<br>
       🥤 撞到相同的杯子 → 合成更大的饮料<br>
       🏝️ 一路合成到终极提基杯，订单赚钱停不下来
     </div>
@@ -75,7 +75,7 @@
 "use strict";
 /* ================= CUP MERGE · 推杯合并 ================= */
 const LW = 440, LH = 800;               // logical canvas size
-const TABLE = { x:16, y:132, w:408, h:584 };   // play field
+const TABLE = { x:16, y:148, w:408, h:568 };   // play field
 const LAUNCH_Y = 648;
 const TIER_N = 10;
 
@@ -169,7 +169,7 @@ const G = {
   cups:[], particles:[], floaters:[], events:[],
   coins:0, best:parseInt(localStorage.getItem("cupmerge_best")||"0"),
   combo:0, comboT:0, fever:0, feverT:0,
-  orders:[], nextTier:1, waitCup:null, cooldown:0,
+  orders:[], currentTier:1, nextTier:1, held:null, cooldown:0,
   shake:0, highest:1, launched:0, merged:0,
   comboPop:0, feverPop:0,
 };
@@ -230,7 +230,7 @@ function physics(dt){
     c.age += dt;
     if(c.sleep) continue;
     // friction
-    const f = Math.exp(-1.55*dt);
+    const f = Math.exp(-1.05*dt);
     c.vx *= f; c.vy *= f;
     c.x += c.vx*dt; c.y += c.vy*dt;
     const sp = Math.hypot(c.vx, c.vy);
@@ -238,10 +238,10 @@ function physics(dt){
     else c.sleepT = 0;
     // walls
     const L=TABLE.x+c.r, R=TABLE.x+TABLE.w-c.r, T=TABLE.y+c.r, B=TABLE.y+TABLE.h-c.r;
-    if(c.x < L){ c.x=L; if(c.vx<0){ wallHit(c,-c.vx); c.vx=-c.vx*0.45; } }
-    if(c.x > R){ c.x=R; if(c.vx>0){ wallHit(c,c.vx); c.vx=-c.vx*0.45; } }
-    if(c.y < T){ c.y=T; if(c.vy<0){ wallHit(c,-c.vy); c.vy=-c.vy*0.45; } }
-    if(c.y > B){ c.y=B; if(c.vy>0){ wallHit(c,c.vy); c.vy=-c.vy*0.45; } }
+    if(c.x < L){ c.x=L; if(c.vx<0){ wallHit(c,-c.vx); c.vx=-c.vx*0.18; } }
+    if(c.x > R){ c.x=R; if(c.vx>0){ wallHit(c,c.vx); c.vx=-c.vx*0.18; } }
+    if(c.y < T){ c.y=T; if(c.vy<0){ wallHit(c,-c.vy); c.vy=-c.vy*0.18; } }
+    if(c.y > B){ c.y=B; if(c.vy>0){ wallHit(c,c.vy); c.vy=-c.vy*0.18; } }
     c.vx *= 0.995; c.vy *= 0.995;
     c.squash += (1-c.squash)*Math.min(1, 10*dt);
   }
@@ -260,7 +260,7 @@ function physics(dt){
       const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
       const vn=rvx*nx+rvy*ny;
       if(vn < 0){
-        const e=0.5, imp=-(1+e)*vn/(1/a.mass+1/b.mass);
+        const e=0.32, imp=-(1+e)*vn/(1/a.mass+1/b.mass);
         a.vx-=imp*nx/a.mass; a.vy-=imp*ny/a.mass;
         b.vx+=imp*nx/b.mass; b.vy+=imp*ny/b.mass;
         const impact=-vn;
@@ -284,8 +284,7 @@ function checkMerges(){
     if(a.age<0.15 || b.age<0.15) continue;
     const rr=a.r+b.r;
     if(dist2(a.x,a.y,b.x,b.y) > (rr+4)*(rr+4)) continue;
-    const rel=Math.hypot(a.vx-b.vx, a.vy-b.vy);
-    if(rel < 300) doMerge(a,b);
+    doMerge(a,b); // first contact merges, like the original
   }
 }
 function doMerge(a,b){
@@ -405,29 +404,41 @@ function updateFx(dt){
 }
 
 /* ================= input: flick to launch ================= */
-function launchCup(px, power, ang){
-  const tier = G.nextTier;
+function launchCup(tier, px, power, ang){
   const x = freeSpot(px);
   const c = spawnCup(tier, x, LAUNCH_Y);
   c.vx = Math.cos(ang)*power; c.vy = Math.sin(ang)*power;
   c.sleep=false; c.sleepT=0;
-  G.nextTier = weightedTier();
   G.cooldown = 0.35; G.launched++;
   AudioSys.play("whoosh", 0.55, rand(0.95,1.1));
   poof(x, LAUNCH_Y+18, 6, "#e8d9bd");
 }
-const TAP_POWER = 1120; // fixed launch power, straight up (faithful to original)
+const TAP_POWER = 1060; // fixed launch power, straight up (faithful to original)
 canvas.addEventListener("pointerdown", e=>{
   AudioSys.init(); AudioSys.resume();
   if(!G.running || G.paused) return;
   const p = toLogical(e.clientX, e.clientY);
-  if(p.y > TABLE.y + TABLE.h - 150 && G.cooldown<=0){
-    const x = clamp(p.x, TABLE.x+30, TABLE.x+TABLE.w-30);
-    launchCup(x, TAP_POWER, -Math.PI/2);
-    ring(x, LAUNCH_Y, 26); // tap ripple
+  if(p.y > TABLE.y + TABLE.h - 150 && G.cooldown<=0 && !G.held){
+    G.held = { x: clamp(p.x, TABLE.x+30, TABLE.x+TABLE.w-30), id: e.pointerId };
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
+    AudioSys.play("click", 0.35, 1.3);
   }
   e.preventDefault();
 },{passive:false});
+canvas.addEventListener("pointermove", e=>{
+  if(!G.held || e.pointerId!==G.held.id) return;
+  const p = toLogical(e.clientX, e.clientY);
+  G.held.x = clamp(p.x, TABLE.x+30, TABLE.x+TABLE.w-30);
+  e.preventDefault();
+},{passive:false});
+function releaseHeld(e){
+  if(!G.held || (e && e.pointerId!==G.held.id)) return;
+  const x = G.held.x; G.held = null;
+  launchCup(G.currentTier, x, TAP_POWER, -Math.PI/2);
+  G.currentTier = G.nextTier; G.nextTier = weightedTier();
+}
+canvas.addEventListener("pointerup", releaseHeld);
+canvas.addEventListener("pointercancel", ()=>{ G.held=null; });
 document.addEventListener("touchmove", e=>e.preventDefault(), {passive:false});
 document.addEventListener("gesturestart", e=>e.preventDefault());
 document.addEventListener("dblclick", e=>e.preventDefault());
@@ -438,10 +449,9 @@ function reset(){
   G.cups=[]; G.particles=[]; G.floaters=[]; G.events=[];
   G.coins=0; G.combo=0; G.comboT=0; G.fever=0; G.feverT=0;
   G.orders=[newOrder(),newOrder(),newOrder()];
-  G.nextTier=1; G.cooldown=0; G.shake=0; G.highest=1; G.launched=0; G.merged=0;
-  // pre-fill a few cups like the original vibe
-  const spots=[[150,300,1],[290,300,1],[220,380,2],[150,460,1],[300,470,2]];
-  for(const [x,y,t] of spots){ const c=spawnCup(t,x,y); c.sleep=true; }
+  G.currentTier=1; G.nextTier=weightedTier(); G.held=null;
+  G.cooldown=0; G.shake=0; G.highest=1; G.launched=0; G.merged=0;
+  // original starts with an empty table
 }
 function start(){
   AudioSys.init(); AudioSys.resume();
@@ -608,25 +618,31 @@ function drawHUD(){
     ctx.fillStyle="rgba(0,0,0,.35)"; rr(150,14,140,10,5); ctx.fill();
     ctx.fillStyle="#ffd94a"; rr(152,16,136*G.fever/100,6,3); ctx.fill();
   }
-  // NEXT card
-  ctx.fillStyle="rgba(255,248,236,.94)"; rr(12,58,76,58,12); ctx.fill();
-  ctx.fillStyle="#8a6a45"; ctx.font="900 12px system-ui"; ctx.textAlign="center";
-  ctx.fillText("NEXT",50,70);
-  drawMini(G.nextTier, 50, 96, 30);
+  // section captions
+  ctx.fillStyle="rgba(255,248,236,.62)"; ctx.font="11px system-ui"; ctx.textAlign="center";
+  ctx.fillText("下一个", 50, 57);
+  ctx.fillText("外卖订单", 268, 57);
+  // NEXT card (distinct accent)
+  ctx.fillStyle="#fff3df"; rr(12,62,76,56,12); ctx.fill();
+  ctx.strokeStyle="#ff9f2e"; ctx.lineWidth=3; rr(12,62,76,56,12); ctx.stroke();
+  drawMini(G.nextTier, 50, 90, 32);
+  // divider
+  ctx.strokeStyle="rgba(255,255,255,.28)"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(97,62); ctx.lineTo(97,118); ctx.stroke();
   // orders
-  let ox=100;
+  let ox=109;
   for(const o of G.orders){
     const done=o.done;
-    ctx.fillStyle=done?"rgba(160,255,170,.9)":"rgba(255,248,236,.94)";
-    rr(ox,58,104,58,12); ctx.fill();
-    ctx.strokeStyle=done?"#4caf50":"#e8d9bd"; ctx.lineWidth=2; rr(ox,58,104,58,12); ctx.stroke();
-    drawMini(o.tier, ox+24, 87, 26);
+    ctx.fillStyle=done?"rgba(160,255,170,.92)":"rgba(255,248,236,.94)";
+    rr(ox,62,100,56,12); ctx.fill();
+    ctx.strokeStyle=done?"#4caf50":"#e0d2b4"; ctx.lineWidth=2; rr(ox,62,100,56,12); ctx.stroke();
+    drawMini(o.tier, ox+23, 90, 26);
     ctx.fillStyle="#6b4a2f"; ctx.font="900 14px system-ui"; ctx.textAlign="left";
-    ctx.fillText(o.have+"/"+o.need, ox+44, 80);
+    ctx.fillText(o.have+"/"+o.need, ox+42, 83);
     ctx.fillStyle="#b8862f"; ctx.font="900 13px system-ui";
-    ctx.fillText("+"+o.payout, ox+44, 100);
-    if(done){ ctx.fillStyle="#2e7d32"; ctx.font="900 20px system-ui"; ctx.fillText("✓",ox+88,70); }
-    ox+=110;
+    ctx.fillText("+"+o.payout, ox+42, 103);
+    if(done){ ctx.fillStyle="#2e7d32"; ctx.font="900 20px system-ui"; ctx.fillText("✓",ox+84,74); }
+    ox+=106;
   }
   // tier bar
   const bx=16, bw=LW-32, bh=56, by=LH-bh-12;
@@ -654,14 +670,23 @@ function drawMini(tier,x,y,size){
   if(img && img.complete && img.naturalWidth) ctx.drawImage(img,x-size/2,y-size/2,size,size);
   else { ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(x,y,size/2,0,7); ctx.fill(); }
 }
-function drawWaiting(){
-  if(G.cooldown>0 || !G.running || G.paused) return;
-  ctx.fillStyle="rgba(255,255,255,.75)"; ctx.font="14px system-ui"; ctx.textAlign="center";
-  const tw=ctx.measureText("在底部点一下发射").width;
-  const bx=(LW-tw)/2-12;
-  ctx.fillStyle="rgba(0,0,0,.3)"; rr(bx,LAUNCH_Y+50,tw+24,26,13); ctx.fill();
-  ctx.fillStyle="rgba(255,255,255,.9)";
-  ctx.fillText("在底部点一下发射", LW/2, LAUNCH_Y+64);
+function drawHeld(){
+  if(!G.running || G.paused) return;
+  if(G.held){
+    const img=Sprites.imgs[G.currentTier];
+    const r=tierRadius(G.currentTier);
+    const pulse=1+Math.sin(G.time*6)*0.04, d=r*2*pulse;
+    ctx.fillStyle="rgba(60,30,10,.28)";
+    ctx.beginPath(); ctx.ellipse(G.held.x, LAUNCH_Y+r*0.62, r*0.8, r*0.28, 0, 0, 7); ctx.fill();
+    if(img && img.complete && img.naturalWidth)
+      ctx.drawImage(img, G.held.x-d/2, LAUNCH_Y-d/2, d, d);
+  } else if(G.cooldown<=0){
+    const t="按住移动，松手发射";
+    ctx.font="14px system-ui"; ctx.textAlign="center";
+    const tw=ctx.measureText(t).width;
+    ctx.fillStyle="rgba(0,0,0,.3)"; rr((LW-tw)/2-12, LAUNCH_Y+50, tw+24, 26, 13); ctx.fill();
+    ctx.fillStyle="rgba(255,255,255,.9)"; ctx.fillText(t, LW/2, LAUNCH_Y+64);
+  }
 }
 
 /* ================= main loop ================= */
@@ -684,7 +709,7 @@ function frame(ts){
   drawBG(); drawTable();
   const sorted=[...G.cups].sort((a,b)=>a.y-b.y);
   for(const c of sorted) drawCup(c);
-  drawParticles(); drawFloaters(); drawHUD(); drawWaiting();
+  drawParticles(); drawFloaters(); drawHUD(); drawHeld();
 }
 // autotest hook for QA (?autotest=1)
 let atT=0;
@@ -692,7 +717,7 @@ function autoTest(dt){
   atT+=dt;
   if(atT>0.7 && G.cooldown<=0){
     atT=0;
-    launchCup(rand(TABLE.x+60,TABLE.x+TABLE.w-60), rand(500,1300), -Math.PI/2+rand(-0.25,0.25));
+    launchCup(weightedTier(), rand(TABLE.x+60,TABLE.x+TABLE.w-60), 1060, -Math.PI/2);
   }
 }
 if(new URLSearchParams(location.search).get("autotest")==="1"){
