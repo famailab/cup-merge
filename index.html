@@ -4,8 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>CUP MERGE · 推杯合并</title>
+<title>CLINK & MERGE · 推杯换盏</title>
 <style>
+  @font-face{ font-family:"Titan One"; src:url("assets/fonts/titanone-latin.woff2") format("woff2"); font-display:swap; }
+  @font-face{ font-family:"Baloo 2"; src:url("assets/fonts/baloo2-latin.woff2") format("woff2"); font-weight:600 800; font-display:swap; }
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html, body {
     width:100%; height:100%; overflow:hidden; background:#0e2a33;
@@ -31,18 +33,24 @@
     padding:24px; transition:opacity .25s;
   }
   .overlay.hidden { opacity:0; pointer-events:none; }
-  .title { font-size:52px; font-weight:900; letter-spacing:2px; color:#ffd98a;
+  .title { font-family:"Titan One","Baloo 2",system-ui,sans-serif; font-size:44px; font-weight:400; letter-spacing:2px; color:#ffd98a;
     text-shadow:0 4px 0 #a35b1b, 0 8px 24px rgba(0,0,0,.5); margin-bottom:6px; }
   .subtitle { font-size:20px; color:#ffe9c4; margin-bottom:22px; letter-spacing:6px; }
   .howto { background:rgba(255,248,236,.1); border:1px solid rgba(255,217,138,.35);
     border-radius:16px; padding:16px 20px; font-size:15px; line-height:1.9; margin-bottom:26px;
     color:#ffe9c4; max-width:320px; }
+  .bigbtn, .ghostbtn { font-family:"Baloo 2",system-ui,sans-serif; }
   .bigbtn {
     font-size:22px; font-weight:800; color:#5a3410; background:linear-gradient(#ffd98a,#ffb63e);
     border:none; border-radius:999px; padding:14px 54px; cursor:pointer;
     box-shadow:0 6px 0 #a35b1b, 0 10px 24px rgba(0,0,0,.4); letter-spacing:2px;
   }
   .bigbtn:active { transform:translateY(4px); box-shadow:0 2px 0 #a35b1b; }
+  .helpcard { background:#fff8ec; border-radius:20px; padding:26px 28px; max-width:360px; width:86%;
+    color:#5a3410; text-align:left; box-shadow:0 20px 60px rgba(0,0,0,.5); max-height:76%; overflow:auto; }
+  .helptitle { font-family:"Titan One","Baloo 2",system-ui,sans-serif; font-size:26px; margin-bottom:12px; text-align:center; }
+  .helprow { margin:10px 0; font-size:14px; line-height:1.5; }
+  .helprow b { display:block; font-size:15px; margin-bottom:2px; }
   .ghostbtn {
     margin-top:14px; font-size:15px; color:#ffe9c4; background:none;
     border:1px solid rgba(255,233,196,.5); border-radius:999px; padding:8px 26px; cursor:pointer;
@@ -55,7 +63,7 @@
   <button class="hudbtn" id="btnMute" title="声音">🔊</button>
   <button class="hudbtn" id="btnPause" title="暂停">⏸</button>
   <div class="overlay" id="titleScreen">
-    <div class="title">CUP MERGE</div>
+    <div class="title">CLINK &amp; MERGE</div>
     <div class="subtitle">推 杯 合 并</div>
     <div class="howto">
       👆 按住杯子左右移动，松手发射<br>
@@ -63,17 +71,31 @@
       🏝️ 一路合成到终极提基杯，订单赚钱停不下来
     </div>
     <button class="bigbtn" id="btnStart">开 始</button>
+    <div>
+      <button class="ghostbtn" id="btnHelp">❓ 玩法说明</button>
+      <button class="ghostbtn" id="btnLang">ENGLISH</button>
+    </div>
+    <div id="verTag" style="margin-top:14px;font-size:12px;color:rgba(255,233,196,.55);font-family:'Baloo 2',system-ui,sans-serif;letter-spacing:1px"></div>
   </div>
   <div class="overlay hidden" id="pauseScreen">
     <div class="title" style="font-size:40px">已暂停</div>
     <div style="height:18px"></div>
     <button class="bigbtn" id="btnResume">继 续</button>
-    <button class="ghostbtn" id="btnRestart">重新开始</button>
+    <button class="ghostbtn" id="btnRestart">重新开始</button><br>
+    <button class="ghostbtn" id="btnHelp2">❓ 玩法说明</button>
+  </div>
+  <div class="overlay hidden" id="helpScreen">
+    <div class="helpcard">
+      <div class="helptitle">玩法说明</div>
+      <div id="helpBody"></div>
+      <div style="text-align:center"><button class="bigbtn" id="btnHelpClose" style="font-size:17px;padding:10px 40px">关闭</button></div>
+    </div>
   </div>
 </div>
 <script>
 "use strict";
 /* ================= CUP MERGE · 推杯合并 ================= */
+const VERSION="1.4";
 const LW = 440, LH = 800;               // logical canvas size
 const TABLE = { x:16, y:148, w:408, h:568 };   // play field
 const LAUNCH_Y = 648;
@@ -100,6 +122,49 @@ const tierMass = t => Math.pow(tierRadius(t), 2) / 625;
 const clamp = (v,a,b)=>v<a?a:v>b?b:v;
 const lerp=(a,b,k)=>a+(b-a)*k;
 const easeOutCubic=k=>1-Math.pow(1-k,3);
+const PHYS_F=0.72; // physics radius = 72% of sprite: cups overlap/occlude like real ones
+const FB=(s,w=800)=>`${w} ${s}px "Baloo 2", ui-rounded, system-ui, sans-serif`;
+const STR={
+zh:{ best:"最佳", combo:"连击", next:"下一个", orders:"外卖订单", hint:"按住移动，松手发射",
+  feverMsg:"FEVER!! 双倍金币", orderDone:"订单完成! +",
+  subtitle:"推杯换盏", start:"开 始", resume:"继 续", restart:"重新开始", paused:"已暂停",
+  howto:"👆 按住杯子左右移动，松手发射<br>🥤 撞到相同的杯子 → 合成更大的饮料<br>🏝️ 一路合成到终极提基杯，订单赚钱停不下来",
+  helpBtn:"玩法说明", helpTitle:"玩法说明", close:"关闭",
+  help:[["🎯 目标","合成越来越大的饮料，完成外卖订单赚金币，一路做到终极提基杯！"],
+  ["👆 操作","按住杯子左右拖动，松手向上发射。"],
+  ["🥤 合成","两个相同的杯子一碰就合成大一号。"],
+  ["🛵 外卖订单","按订单做出指定饮料，交货拿小费。"],
+  ["🔥 连击","短时间内连续合成可提高金币倍率，最高 x8。"],
+  ["⚡ FEVER","合成积攒闪电能量，攒满进入 12 秒双倍金币！"]]},
+en:{ best:"BEST", combo:"COMBO", next:"NEXT", orders:"ORDERS", hint:"HOLD · DRAG · RELEASE",
+  feverMsg:"FEVER!! DOUBLE COINS", orderDone:"ORDER DONE! +",
+  subtitle:"PUSH · MERGE · SIP", start:"START", resume:"RESUME", restart:"RESTART", paused:"PAUSED",
+  howto:"👆 Hold the cup, drag left / right, release to launch<br>🥤 Same cups merge into a bigger drink on contact<br>🏝️ Merge all the way to the legendary Tiki — orders pay nonstop",
+  helpBtn:"HOW TO PLAY", helpTitle:"HOW TO PLAY", close:"CLOSE",
+  help:[["🎯 GOAL","Merge drinks into bigger ones, complete delivery orders for coins, and work your way up to the legendary Tiki!"],
+  ["👆 CONTROLS","Press, drag left / right, release to launch the cup upward."],
+  ["🥤 MERGE","Two identical cups merge into the next size on first contact."],
+  ["🛵 ORDERS","Serve exactly what each order asks for to earn tips."],
+  ["🔥 COMBO","Chain merges quickly to boost the coin multiplier — up to x8."],
+  ["⚡ FEVER","Merges charge the bolt meter. Fill it for 12 seconds of DOUBLE coins!"]]}};
+const T=k=>STR[G.lang][k];
+// pre-rendered soft shadow (radial gradient, no hard edge)
+const SHADOW_IMG=(()=>{
+  const c=document.createElement("canvas"); c.width=c.height=128;
+  const g=c.getContext("2d");
+  const grd=g.createRadialGradient(64,64,6,64,64,62);
+  grd.addColorStop(0,"rgba(46,23,8,.36)");
+  grd.addColorStop(0.55,"rgba(46,23,8,.16)");
+  grd.addColorStop(1,"rgba(46,23,8,0)");
+  g.fillStyle=grd; g.fillRect(0,0,128,128);
+  return c;
+})();
+function drawShadow(x,y,r,alpha=1){
+  const w=r*2.0, h=r*0.9;
+  ctx.save(); ctx.globalAlpha=alpha;
+  ctx.drawImage(SHADOW_IMG, x-w/2+r*0.16, y+r*0.38-h/2, w, h);
+  ctx.restore();
+}
 const rand = (a,b)=>a+Math.random()*(b-a);
 const dist2 = (ax,ay,bx,by)=>{const dx=ax-bx,dy=ay-by;return dx*dx+dy*dy;};
 
@@ -174,6 +239,7 @@ const G = {
   orders:[], currentTier:1, nextTier:1, held:null, incoming:null, aimX:220, cooldown:0,
   shake:0, highest:1, launched:0, merged:0,
   comboPop:0, feverPop:0,
+  lang:localStorage.getItem("cupmerge_lang")||"zh",
 };
 function addCoins(n, x, y, color){
   n = Math.round(n); G.coins += n;
@@ -198,7 +264,7 @@ function loadSprites(){
 /* ================= cups & physics ================= */
 let cupId = 0;
 function spawnCup(tier, x, y, vx=0, vy=0){
-  const c = { id:++cupId, tier, x, y, vx, vy, r:tierRadius(tier),
+  const c = { id:++cupId, tier, x, y, vx, vy, r:tierRadius(tier), pr:tierRadius(tier)*PHYS_F,
     mass:tierMass(tier), age:0, sleep:false, sleepT:0, pop:0, squash:1, mergeCd:0 };
   G.cups.push(c);
   if(G.cups.length > 46){ // gentle cap: remove oldest sleeping tier-1
@@ -218,8 +284,8 @@ function weightedTier(){
 function freeSpot(x){
   x = clamp(x, TABLE.x+30, TABLE.x+TABLE.w-30);
   for(const c of G.cups){
-    if(Math.abs(c.y - LAUNCH_Y) < 70 && Math.abs(c.x - x) < c.r + 30){
-      x = c.x + (c.r + 32) * (x >= c.x ? 1 : -1);
+    if(Math.abs(c.y - LAUNCH_Y) < 70 && Math.abs(c.x - x) < c.pr + 30){
+      x = c.x + (c.pr + 32) * (x >= c.x ? 1 : -1);
       x = clamp(x, TABLE.x+30, TABLE.x+TABLE.w-30);
     }
   }
@@ -239,7 +305,7 @@ function physics(dt){
     if(sp < 12){ c.sleepT += dt; if(c.sleepT > 0.35){ c.sleep=true; c.vx=c.vy=0; } }
     else c.sleepT = 0;
     // walls
-    const L=TABLE.x+c.r, R=TABLE.x+TABLE.w-c.r, T=TABLE.y+c.r, B=TABLE.y+TABLE.h-c.r;
+    const L=TABLE.x+c.pr, R=TABLE.x+TABLE.w-c.pr, T=TABLE.y+c.pr, B=TABLE.y+TABLE.h-c.pr;
     if(c.x < L){ c.x=L; if(c.vx<0){ wallHit(c,-c.vx); c.vx=-c.vx*0.18; } }
     if(c.x > R){ c.x=R; if(c.vx>0){ wallHit(c,c.vx); c.vx=-c.vx*0.18; } }
     if(c.y < T){ c.y=T; if(c.vy<0){ wallHit(c,-c.vy); c.vy=-c.vy*0.18; } }
@@ -252,7 +318,7 @@ function physics(dt){
     for(let i=0;i<cups.length;i++) for(let j=i+1;j<cups.length;j++){
       const a=cups[i], b=cups[j];
       if(a.mergeCd>0 || b.mergeCd>0) continue;
-      const dx=b.x-a.x, dy=b.y-a.y, rr=a.r+b.r;
+      const dx=b.x-a.x, dy=b.y-a.y, rr=a.pr+b.pr;
       const d2=dx*dx+dy*dy;
       if(d2 >= rr*rr || d2 === 0) continue;
       const d=Math.sqrt(d2), nx=dx/d, ny=dy/d, overlap=rr-d;
@@ -274,7 +340,7 @@ function physics(dt){
   // re-clamp: collision de-overlap can shove cups (esp. sleeping ones) past the walls
   for(const c of cups){
     if(c.mergeCd>0) continue;
-    const L2=TABLE.x+c.r, R2=TABLE.x+TABLE.w-c.r, T2=TABLE.y+c.r, B2=TABLE.y+TABLE.h-c.r;
+    const L2=TABLE.x+c.pr, R2=TABLE.x+TABLE.w-c.pr, T2=TABLE.y+c.pr, B2=TABLE.y+TABLE.h-c.pr;
     if(c.x<L2) c.x=L2; else if(c.x>R2) c.x=R2;
     if(c.y<T2) c.y=T2; else if(c.y>B2) c.y=B2;
   }
@@ -291,7 +357,7 @@ function checkMerges(){
     const a=cups[i], b=cups[j];
     if(a.tier!==b.tier || a.mergeCd>0 || b.mergeCd>0) continue;
     if(a.age<0.15 || b.age<0.15) continue;
-    const rr=a.r+b.r;
+    const rr=a.pr+b.pr;
     if(dist2(a.x,a.y,b.x,b.y) > (rr+4)*(rr+4)) continue;
     doMerge(a,b); // first contact merges, like the original
   }
@@ -326,7 +392,7 @@ function doMerge(a,b){
     G.fever = Math.min(100, G.fever + nt*5);
     if(G.fever >= 100){ G.fever=0; G.feverT=G.time+12; G.feverPop=1;
       AudioSys.play("fever", 0.8);
-      G.floaters.push({x:220, y:360, text:"FEVER!! 双倍金币", life:1.8, t:0, color:"#ffd94a", size:30}); }
+      G.floaters.push({x:220, y:360, text:T("feverMsg"), life:1.8, t:0, color:"#ffd94a", size:30}); }
   }
   // juice
   burst(mx, my, nt, feverOn); ring(mx, my, nc.r);
@@ -338,7 +404,7 @@ function doMerge(a,b){
   schedule(0.09, ()=>{
     for(const o of G.cups){
       if(o!==nc && o.tier===nt && o.mergeCd<=0 && nc.mergeCd<=0){
-        const rr=nc.r+o.r;
+        const rr=nc.pr+o.pr;
         if(dist2(nc.x,nc.y,o.x,o.y) < (rr+8)*(rr+8)){ doMerge(nc,o); break; }
       }
     }
@@ -362,7 +428,7 @@ function orderProgress(nt, x, y){
     if(!o.done && o.have>=o.need){
       o.done=true;
       addCoins(o.payout, x, y-70, "#7dff9a");
-      G.floaters.push({x:220, y:300, text:"订单完成! +"+o.payout, life:1.5, t:0, color:"#7dff9a", size:24});
+      G.floaters.push({x:220, y:300, text:T("orderDone")+o.payout, life:1.5, t:0, color:"#7dff9a", size:24});
       AudioSys.play("fanfare", 0.75);
       schedule(1.0, ()=>{ const i=G.orders.indexOf(o); if(i>=0) G.orders[i]=newOrder(); });
     }
@@ -557,9 +623,7 @@ function drawCup(c){
   const pop = c.pop<1 ? (c.pop<0.7 ? c.pop/0.7*1.18 : 1.18-(c.pop-0.7)/0.3*0.18) : 1;
   const sq = c.squash;
   const d = c.r*2*pop;
-  // shadow
-  ctx.fillStyle="rgba(60,30,10,.28)";
-  ctx.beginPath(); ctx.ellipse(c.x, c.y+c.r*0.62, c.r*0.8, c.r*0.28, 0, 0, 7); ctx.fill();
+  drawShadow(c.x, c.y, c.r);
   ctx.save();
   ctx.translate(c.x, c.y); ctx.scale(2-sq, sq);
   if(img && img.complete && img.naturalWidth){
@@ -607,35 +671,40 @@ function drawHUD(){
   ctx.save(); ctx.translate(58,26); ctx.scale(cp,cp);
   ctx.fillStyle="#ffcf3f"; ctx.beginPath(); ctx.arc(0,0,15,0,7); ctx.fill();
   ctx.fillStyle="#e8a020"; ctx.beginPath(); ctx.arc(0,0,10,0,7); ctx.fill();
-  ctx.fillStyle="#ffcf3f"; ctx.font="900 13px sans-serif"; ctx.textAlign="center";
+  ctx.fillStyle="#ffcf3f"; ctx.font=FB(13); ctx.textAlign="center";
   ctx.fillText("¢",0,1); ctx.restore();
-  ctx.fillStyle="#fff8ec"; ctx.font="900 26px ui-rounded,system-ui,sans-serif";
+  ctx.fillStyle="#fff8ec"; ctx.font=FB(26);
   ctx.fillText(String(G.coins), 82, 27);
-  ctx.fillStyle="rgba(255,248,236,.65)"; ctx.font="13px system-ui";
-  ctx.fillText("最佳 "+G.best, 82, 50);
+  ctx.fillStyle="rgba(255,248,236,.65)"; ctx.font=FB(13,600);
+  ctx.fillText(T("best")+" "+G.best, 82, 50);
   // combo badge
   if(G.combo>=2 && G.time-G.comboT<2.2){
     const bp=1+G.comboPop*0.5;
     ctx.save(); ctx.translate(370,26); ctx.scale(bp,bp);
     ctx.fillStyle="#ff9d5c"; rr(-52,-17,104,34,17); ctx.fill();
-    ctx.fillStyle="#fff"; ctx.font="900 17px system-ui"; ctx.textAlign="center";
-    ctx.fillText("连击 x"+Math.min(G.combo,8),0,1); ctx.restore();
+    ctx.fillStyle="#fff"; ctx.font=FB(17); ctx.textAlign="center";
+    ctx.fillText(T("combo")+" x"+Math.min(G.combo,8),0,1); ctx.restore();
   }
   // fever bar / badge
   if(G.time < G.feverT){
     const left=G.feverT-G.time;
     ctx.save(); ctx.translate(220,26);
     ctx.fillStyle="#ffd94a"; rr(-70,-17,140,34,17); ctx.fill();
-    ctx.fillStyle="#5a3410"; ctx.font="900 16px system-ui"; ctx.textAlign="center";
+    ctx.fillStyle="#5a3410"; ctx.font=FB(16); ctx.textAlign="center";
     ctx.fillText("FEVER "+left.toFixed(0)+"s",0,1); ctx.restore();
   } else if(G.fever>0){
-    ctx.fillStyle="rgba(0,0,0,.35)"; rr(150,14,140,10,5); ctx.fill();
-    ctx.fillStyle="#ffd94a"; rr(152,16,136*G.fever/100,6,3); ctx.fill();
+    const hot=G.fever>=70, pulse=hot?1+Math.sin(G.time*10)*0.07:1;
+    ctx.save(); ctx.translate(220,19); ctx.scale(pulse,pulse);
+    ctx.font=FB(15); ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText("⚡",-80,1);
+    ctx.fillStyle="rgba(0,0,0,.35)"; rr(-70,-5,140,10,5); ctx.fill();
+    if(G.fever>1){ ctx.fillStyle=hot?"#fff3b0":"#ffd94a"; rr(-68,-3,136*G.fever/100,6,3); ctx.fill(); }
+    ctx.restore();
   }
   // section captions
-  ctx.fillStyle="rgba(255,248,236,.62)"; ctx.font="11px system-ui"; ctx.textAlign="center";
-  ctx.fillText("下一个", 50, 57);
-  ctx.fillText("外卖订单", 268, 57);
+  ctx.fillStyle="rgba(255,248,236,.62)"; ctx.font=FB(11,600); ctx.textAlign="center";
+  ctx.fillText(T("next"), 50, 57);
+  ctx.fillText(T("orders"), 268, 57);
   // NEXT card (distinct accent)
   ctx.fillStyle="#fff3df"; rr(12,62,76,56,12); ctx.fill();
   ctx.strokeStyle="#ff9f2e"; ctx.lineWidth=3; rr(12,62,76,56,12); ctx.stroke();
@@ -651,9 +720,9 @@ function drawHUD(){
     rr(ox,62,100,56,12); ctx.fill();
     ctx.strokeStyle=done?"#4caf50":"#e0d2b4"; ctx.lineWidth=2; rr(ox,62,100,56,12); ctx.stroke();
     drawMini(o.tier, ox+23, 90, 26);
-    ctx.fillStyle="#6b4a2f"; ctx.font="900 14px system-ui"; ctx.textAlign="left";
+    ctx.fillStyle="#6b4a2f"; ctx.font=FB(14); ctx.textAlign="left";
     ctx.fillText(o.have+"/"+o.need, ox+42, 83);
-    ctx.fillStyle="#b8862f"; ctx.font="900 13px system-ui";
+    ctx.fillStyle="#b8862f"; ctx.font=FB(13);
     ctx.fillText("+"+o.payout, ox+42, 103);
     if(done){ ctx.fillStyle="#2e7d32"; ctx.font="900 20px system-ui"; ctx.fillText("✓",ox+84,74); }
     ox+=106;
@@ -700,13 +769,12 @@ function drawHeld(){
     y=LAUNCH_Y+Math.sin(G.time*2.2)*3; s=1+Math.sin(G.time*2.2)*0.02;
   }
   const d=r*2*s;
-  ctx.fillStyle="rgba(60,30,10,.28)";
-  ctx.beginPath(); ctx.ellipse(x, LAUNCH_Y+r*0.62, r*0.8*s, r*0.28*s, 0, 0, 7); ctx.fill();
+  drawShadow(x, LAUNCH_Y, r*s);
   if(img && img.complete && img.naturalWidth)
     ctx.drawImage(img, x-d/2, y-d/2, d, d);
   if(!G.held && !G.incoming && G.cooldown<=0 && G.launched===0){
-    const t="按住移动，松手发射";
-    ctx.font="14px system-ui"; ctx.textAlign="center";
+    const t=T("hint");
+    ctx.font=FB(14,600); ctx.textAlign="center";
     const tw=ctx.measureText(t).width;
     ctx.fillStyle="rgba(0,0,0,.3)"; rr((LW-tw)/2-12, LAUNCH_Y+50, tw+24, 26, 13); ctx.fill();
     ctx.fillStyle="rgba(255,255,255,.9)"; ctx.fillText(t, LW/2, LAUNCH_Y+64);
@@ -751,6 +819,31 @@ if(new URLSearchParams(location.search).get("autotest")==="1"){
   document.getElementById("titleScreen").classList.add("hidden");
   reset(); G.running=true;
 }
+function applyLang(){
+  const d=STR[G.lang];
+  document.querySelector("#titleScreen .subtitle").textContent=d.subtitle;
+  document.querySelector("#titleScreen .howto").innerHTML=d.howto;
+  document.getElementById("btnStart").textContent=d.start;
+  document.querySelector("#pauseScreen .title").textContent=d.paused;
+  document.getElementById("btnResume").textContent=d.resume;
+  document.getElementById("btnRestart").textContent=d.restart;
+  document.getElementById("btnLang").textContent=G.lang==="zh"?"ENGLISH":"中文";
+  document.getElementById("btnHelp").textContent="❓ "+d.helpBtn;
+  document.getElementById("btnHelp2").textContent="❓ "+d.helpBtn;
+  document.querySelector("#helpScreen .helptitle").textContent=d.helpTitle;
+  document.getElementById("helpBody").innerHTML=d.help.map(h=>`<div class="helprow"><b>${h[0]}</b><span>${h[1]}</span></div>`).join("");
+  document.getElementById("btnHelpClose").textContent=d.close;
+}
+document.getElementById("btnLang").onclick=()=>{ AudioSys.play("click",0.4,1.2);
+  G.lang=G.lang==="zh"?"en":"zh"; localStorage.setItem("cupmerge_lang",G.lang); applyLang(); };
+document.getElementById("btnHelp").onclick=()=>{ AudioSys.play("click",0.4,1.2);
+  document.getElementById("helpScreen").classList.remove("hidden"); };
+document.getElementById("btnHelp2").onclick=()=>{ AudioSys.play("click",0.4,1.2);
+  document.getElementById("helpScreen").classList.remove("hidden"); };
+document.getElementById("btnHelpClose").onclick=()=>{ AudioSys.play("click",0.4,1.2);
+  document.getElementById("helpScreen").classList.add("hidden"); };
+applyLang();
+document.getElementById("verTag").textContent="v"+VERSION;
 loadSprites(); updateMuteBtn();
 requestAnimationFrame(frame);
 </script>
