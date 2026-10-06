@@ -58,7 +58,7 @@
     <div class="title">CUP MERGE</div>
     <div class="subtitle">推 杯 合 并</div>
     <div class="howto">
-      👆 按住底部杯子，向上甩出<br>
+      👆 在底部点一下，杯子直飞到顶<br>
       🥤 撞到相同的杯子 → 合成更大的饮料<br>
       🏝️ 一路合成到终极提基杯，订单赚钱停不下来
     </div>
@@ -170,7 +170,7 @@ const G = {
   coins:0, best:parseInt(localStorage.getItem("cupmerge_best")||"0"),
   combo:0, comboT:0, fever:0, feverT:0,
   orders:[], nextTier:1, waitCup:null, cooldown:0,
-  shake:0, aim:null, highest:1, launched:0, merged:0,
+  shake:0, highest:1, launched:0, merged:0,
   comboPop:0, feverPop:0,
 };
 function addCoins(n, x, y, color){
@@ -230,7 +230,7 @@ function physics(dt){
     c.age += dt;
     if(c.sleep) continue;
     // friction
-    const f = Math.exp(-1.9*dt);
+    const f = Math.exp(-1.55*dt);
     c.vx *= f; c.vy *= f;
     c.x += c.vx*dt; c.y += c.vy*dt;
     const sp = Math.hypot(c.vx, c.vy);
@@ -260,7 +260,7 @@ function physics(dt){
       const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
       const vn=rvx*nx+rvy*ny;
       if(vn < 0){
-        const e=0.42, imp=-(1+e)*vn/(1/a.mass+1/b.mass);
+        const e=0.5, imp=-(1+e)*vn/(1/a.mass+1/b.mass);
         a.vx-=imp*nx/a.mass; a.vy-=imp*ny/a.mass;
         b.vx+=imp*nx/b.mass; b.vy+=imp*ny/b.mass;
         const impact=-vn;
@@ -416,35 +416,18 @@ function launchCup(px, power, ang){
   AudioSys.play("whoosh", 0.55, rand(0.95,1.1));
   poof(x, LAUNCH_Y+18, 6, "#e8d9bd");
 }
+const TAP_POWER = 1120; // fixed launch power, straight up (faithful to original)
 canvas.addEventListener("pointerdown", e=>{
   AudioSys.init(); AudioSys.resume();
   if(!G.running || G.paused) return;
   const p = toLogical(e.clientX, e.clientY);
   if(p.y > TABLE.y + TABLE.h - 150 && G.cooldown<=0){
-    G.aim = { sx:p.x, sy:p.y, cx:p.x, cy:p.y, id:e.pointerId };
-    canvas.setPointerCapture(e.pointerId);
+    const x = clamp(p.x, TABLE.x+30, TABLE.x+TABLE.w-30);
+    launchCup(x, TAP_POWER, -Math.PI/2);
+    ring(x, LAUNCH_Y, 26); // tap ripple
   }
   e.preventDefault();
 },{passive:false});
-canvas.addEventListener("pointermove", e=>{
-  if(!G.aim || e.pointerId!==G.aim.id) return;
-  const p = toLogical(e.clientX, e.clientY);
-  G.aim.cx = clamp(p.x, TABLE.x+20, TABLE.x+TABLE.w-20);
-  G.aim.cy = clamp(p.y, TABLE.y, TABLE.y+TABLE.h);
-  e.preventDefault();
-},{passive:false});
-function endAim(e){
-  if(!G.aim || (e && e.pointerId!==G.aim.id)) return;
-  const a=G.aim; G.aim=null;
-  const dx=a.cx-a.sx, dy=a.cy-a.sy;
-  if(dy < -34){
-    const len=Math.hypot(dx,dy);
-    const power=clamp(len*5.4, 280, 1520);
-    launchCup(a.cx, power, Math.atan2(dy,dx));
-  }
-}
-canvas.addEventListener("pointerup", endAim);
-canvas.addEventListener("pointercancel", ()=>{G.aim=null;});
 document.addEventListener("touchmove", e=>e.preventDefault(), {passive:false});
 document.addEventListener("gesturestart", e=>e.preventDefault());
 document.addEventListener("dblclick", e=>e.preventDefault());
@@ -565,26 +548,6 @@ function drawCup(c){
   ctx.restore();
   // sleep hint: tiny zzz? skip
 }
-function drawAim(){
-  const a=G.aim; if(!a) return;
-  const dx=a.cx-a.sx, dy=a.cy-a.sy;
-  if(dy >= -10) return;
-  const len=Math.hypot(dx,dy), ang=Math.atan2(dy,dx);
-  const power=clamp(len*5.4,280,1520);
-  const sx=clamp(a.cx,TABLE.x+24,TABLE.x+TABLE.w-24);
-  ctx.save();
-  ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.lineWidth=4; ctx.setLineDash([4,12]);
-  ctx.lineCap="round";
-  ctx.beginPath(); ctx.moveTo(sx,LAUNCH_Y);
-  ctx.lineTo(sx+Math.cos(ang)*len*1.6, LAUNCH_Y+Math.sin(ang)*len*1.6); ctx.stroke();
-  ctx.setLineDash([]);
-  // power meter
-  const pw=clamp((power-280)/1240,0,1);
-  ctx.fillStyle="rgba(0,0,0,.35)"; rr(sx-60,LAUNCH_Y+52,120,12,6); ctx.fill();
-  ctx.fillStyle=pw<.5?"#7dff9a":pw<.8?"#ffd94a":"#ff6b5c";
-  rr(sx-58,LAUNCH_Y+54,116*pw,8,4); ctx.fill();
-  ctx.restore();
-}
 function drawParticles(){
   for(const p of G.particles){
     const k=1-p.t/p.life;
@@ -692,16 +655,13 @@ function drawMini(tier,x,y,size){
   else { ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(x,y,size/2,0,7); ctx.fill(); }
 }
 function drawWaiting(){
-  if(G.aim || G.cooldown>0 || !G.running || G.paused) return;
-  const img=Sprites.imgs[G.nextTier];
-  const r=tierRadius(G.nextTier);
-  const bob=Math.sin(G.time*3)*4;
-  const x=clamp(220,TABLE.x+r,TABLE.x+TABLE.w-r), y=LAUNCH_Y+bob;
-  ctx.save(); ctx.globalAlpha=0.95;
-  if(img && img.complete && img.naturalWidth) ctx.drawImage(img,x-r,y-r,r*2,r*2);
-  ctx.restore();
-  ctx.fillStyle="rgba(255,255,255,.7)"; ctx.font="13px system-ui"; ctx.textAlign="center";
-  ctx.fillText("按住向上甩出", x, LAUNCH_Y+62);
+  if(G.cooldown>0 || !G.running || G.paused) return;
+  ctx.fillStyle="rgba(255,255,255,.75)"; ctx.font="14px system-ui"; ctx.textAlign="center";
+  const tw=ctx.measureText("在底部点一下发射").width;
+  const bx=(LW-tw)/2-12;
+  ctx.fillStyle="rgba(0,0,0,.3)"; rr(bx,LAUNCH_Y+50,tw+24,26,13); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,.9)";
+  ctx.fillText("在底部点一下发射", LW/2, LAUNCH_Y+64);
 }
 
 /* ================= main loop ================= */
@@ -724,7 +684,7 @@ function frame(ts){
   drawBG(); drawTable();
   const sorted=[...G.cups].sort((a,b)=>a.y-b.y);
   for(const c of sorted) drawCup(c);
-  drawAim(); drawParticles(); drawFloaters(); drawHUD(); drawWaiting();
+  drawParticles(); drawFloaters(); drawHUD(); drawWaiting();
 }
 // autotest hook for QA (?autotest=1)
 let atT=0;
