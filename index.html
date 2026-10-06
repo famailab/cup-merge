@@ -98,6 +98,8 @@ const tierMass = t => Math.pow(tierRadius(t), 2) / 625;
 
 // ---- utils ----
 const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,k)=>a+(b-a)*k;
+const easeOutCubic=k=>1-Math.pow(1-k,3);
 const rand = (a,b)=>a+Math.random()*(b-a);
 const dist2 = (ax,ay,bx,by)=>{const dx=ax-bx,dy=ay-by;return dx*dx+dy*dy;};
 
@@ -169,7 +171,7 @@ const G = {
   cups:[], particles:[], floaters:[], events:[],
   coins:0, best:parseInt(localStorage.getItem("cupmerge_best")||"0"),
   combo:0, comboT:0, fever:0, feverT:0,
-  orders:[], currentTier:1, nextTier:1, held:null, cooldown:0,
+  orders:[], currentTier:1, nextTier:1, held:null, incoming:null, aimX:220, cooldown:0,
   shake:0, highest:1, launched:0, merged:0,
   comboPop:0, feverPop:0,
 };
@@ -268,6 +270,13 @@ function physics(dt){
         if(impact > 260){ a.squash=0.8; b.squash=0.8; }
       }
     }
+  }
+  // re-clamp: collision de-overlap can shove cups (esp. sleeping ones) past the walls
+  for(const c of cups){
+    if(c.mergeCd>0) continue;
+    const L2=TABLE.x+c.r, R2=TABLE.x+TABLE.w-c.r, T2=TABLE.y+c.r, B2=TABLE.y+TABLE.h-c.r;
+    if(c.x<L2) c.x=L2; else if(c.x>R2) c.x=R2;
+    if(c.y<T2) c.y=T2; else if(c.y>B2) c.y=B2;
   }
   checkMerges();
 }
@@ -420,6 +429,7 @@ canvas.addEventListener("pointerdown", e=>{
   const p = toLogical(e.clientX, e.clientY);
   if(p.y > TABLE.y + TABLE.h - 150 && G.cooldown<=0 && !G.held){
     G.held = { x: clamp(p.x, TABLE.x+30, TABLE.x+TABLE.w-30), id: e.pointerId };
+    G.aimX = G.held.x;
     try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
     AudioSys.play("click", 0.35, 1.3);
   }
@@ -429,6 +439,7 @@ canvas.addEventListener("pointermove", e=>{
   if(!G.held || e.pointerId!==G.held.id) return;
   const p = toLogical(e.clientX, e.clientY);
   G.held.x = clamp(p.x, TABLE.x+30, TABLE.x+TABLE.w-30);
+  G.aimX = G.held.x;
   e.preventDefault();
 },{passive:false});
 function releaseHeld(e){
@@ -436,6 +447,9 @@ function releaseHeld(e){
   const x = G.held.x; G.held = null;
   launchCup(G.currentTier, x, TAP_POWER, -Math.PI/2);
   G.currentTier = G.nextTier; G.nextTier = weightedTier();
+  G.aimX = x;
+  // the cup that was in NEXT flies down to your hand
+  G.incoming = { t:0, dur:0.22, tier:G.currentTier, fx:50, fy:90, tx:x, ty:LAUNCH_Y };
 }
 canvas.addEventListener("pointerup", releaseHeld);
 canvas.addEventListener("pointercancel", ()=>{ G.held=null; });
@@ -449,7 +463,7 @@ function reset(){
   G.cups=[]; G.particles=[]; G.floaters=[]; G.events=[];
   G.coins=0; G.combo=0; G.comboT=0; G.fever=0; G.feverT=0;
   G.orders=[newOrder(),newOrder(),newOrder()];
-  G.currentTier=1; G.nextTier=weightedTier(); G.held=null;
+  G.currentTier=1; G.nextTier=weightedTier(); G.held=null; G.incoming=null; G.aimX=220;
   G.cooldown=0; G.shake=0; G.highest=1; G.launched=0; G.merged=0;
   // original starts with an empty table
 }
@@ -672,15 +686,25 @@ function drawMini(tier,x,y,size){
 }
 function drawHeld(){
   if(!G.running || G.paused) return;
-  if(G.held){
-    const img=Sprites.imgs[G.currentTier];
-    const r=tierRadius(G.currentTier);
-    const pulse=1+Math.sin(G.time*6)*0.04, d=r*2*pulse;
-    ctx.fillStyle="rgba(60,30,10,.28)";
-    ctx.beginPath(); ctx.ellipse(G.held.x, LAUNCH_Y+r*0.62, r*0.8, r*0.28, 0, 0, 7); ctx.fill();
-    if(img && img.complete && img.naturalWidth)
-      ctx.drawImage(img, G.held.x-d/2, LAUNCH_Y-d/2, d, d);
-  } else if(G.cooldown<=0){
+  const tier=G.currentTier, img=Sprites.imgs[tier], r=tierRadius(tier);
+  let x=G.aimX, y=LAUNCH_Y, s=1;
+  if(G.incoming){
+    // NEXT -> hand fly-in
+    const k=easeOutCubic(clamp(G.incoming.t/G.incoming.dur,0,1));
+    x=lerp(G.incoming.fx,G.incoming.tx,k);
+    y=lerp(G.incoming.fy,G.incoming.ty,k)-Math.sin(k*Math.PI)*36;
+    s=0.55+0.45*k;
+  } else if(G.held){
+    x=G.held.x; s=1+Math.sin(G.time*6)*0.04;
+  } else {
+    y=LAUNCH_Y+Math.sin(G.time*2.2)*3; s=1+Math.sin(G.time*2.2)*0.02;
+  }
+  const d=r*2*s;
+  ctx.fillStyle="rgba(60,30,10,.28)";
+  ctx.beginPath(); ctx.ellipse(x, LAUNCH_Y+r*0.62, r*0.8*s, r*0.28*s, 0, 0, 7); ctx.fill();
+  if(img && img.complete && img.naturalWidth)
+    ctx.drawImage(img, x-d/2, y-d/2, d, d);
+  if(!G.held && !G.incoming && G.cooldown<=0 && G.launched===0){
     const t="按住移动，松手发射";
     ctx.font="14px system-ui"; ctx.textAlign="center";
     const tw=ctx.measureText(t).width;
@@ -698,6 +722,8 @@ function frame(ts){
   if(G.running && !G.paused){
     G.time+=dt;
     G.cooldown=Math.max(0,G.cooldown-dt);
+    if(G.incoming){ G.incoming.t+=dt;
+      if(G.incoming.t>=G.incoming.dur){ G.incoming=null; AudioSys.play("click",0.22,1.7); } }
     const sub=2, sdt=dt/sub;
     for(let i=0;i<sub;i++) physics(sdt);
     for(const c of G.cups) if(c.pop<1) c.pop=Math.min(1,c.pop+dt*5.5);
